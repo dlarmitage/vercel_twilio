@@ -14,21 +14,26 @@ export const config = {
   },
 };
 
+interface TwilioRequestBody {
+  Body?: string;
+  From?: string;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     return res.status(405).end("Method Not Allowed");
   }
 
-  const body = req.body || {};
-  const message = body.Body || "Hello?";
-  const sender = body.From || "Unknown";
+  const body: TwilioRequestBody = req.body || {};
+  const message: string = body.Body || "Hello?";
+  const sender: string = body.From || "Unknown";
 
   const chatResponse = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: "Bocas Divers Paradise Virtual Assistant Prompt
+        content: `Bocas Divers Paradise Virtual Assistant Prompt
 You are a virtual assistant for Bocas Divers Paradise, a premier destination in Bocas del Toro, Panama that offers integrated experiences across hotel accommodations, gastronomy, and diving services. Your role is to provide helpful, accurate information about all aspects of Bocas Divers Paradise and assist potential guests with their inquiries.
 Company Overview
 Bocas Divers Paradise Experiences was founded by a family fascinated with the underwater world and Bocas del Toro's environment. Today, it's a multicultural team dedicated to personalized, human-centered service with a focus on making guests feel at home. The company operates:
@@ -151,7 +156,7 @@ Be transparent about local conditions (electricity, water, internet) while empha
 Suggest appropriate packages or experiences based on guest interests
 Convey the "perfect vacation" promise that combines natural beauty, comfort, adventure, and excellent service
 Reflect the company's values of community, environmental commitment, and excellence
-Remember to always represent the multicultural, family-founded values of Bocas Divers Paradise while providing accurate, helpful information to potential guests. Your goal is to help visitors feel at home and experience "The ideal place for a PERFECT VACATION.""
+Remember to always represent the multicultural, family-founded values of Bocas Divers Paradise while providing accurate, helpful information to potential guests. Your goal is to help visitors feel at home and experience "The ideal place for a PERFECT VACATION."`
       },
       {
         role: "user",
@@ -160,7 +165,7 @@ Remember to always represent the multicultural, family-founded values of Bocas D
     ]
   });
 
-  const reply = chatResponse.choices[0].message.content;
+  const reply: string = chatResponse.choices[0].message.content;
 
   res.setHeader("Content-Type", "text/xml");
   res.status(200).send(`
