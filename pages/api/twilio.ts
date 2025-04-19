@@ -165,7 +165,7 @@ Remember to always represent the multicultural, family-founded values of Bocas D
     ]
   });
 
-  const reply: string = chatResponse.choices[0].message.content;
+  const reply: string = chatResponse.choices[0].message.content ?? "Sorry, I could not generate a response.";
 
   res.setHeader("Content-Type", "text/xml");
   res.status(200).send(`
