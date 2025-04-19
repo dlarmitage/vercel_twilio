@@ -1,1 +1,20 @@
+# Dependency directories
+node_modules/
+.next/
+
+# Local env files
+.env*
+
+# OS files
+.DS_Store
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+out/
+
+# Vercel
 .vercel
