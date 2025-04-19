@@ -1,32 +1,37 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { OpenAI } from "openai";
+import { parse } from "querystring";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
-
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: "1mb",
-    },
-    externalResolver: true,
-  },
-};
 
 interface TwilioRequestBody {
   Body?: string;
   From?: string;
 }
 
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     return res.status(405).end("Method Not Allowed");
   }
 
-  const body: TwilioRequestBody = req.body || {};
-  const message: string = body.Body || "Hello?";
-  const sender: string = body.From || "Unknown";
+  // Manually parse x-www-form-urlencoded body
+  const buffers = [];
+  for await (const chunk of req) {
+    buffers.push(chunk);
+  }
+  const bodyString = Buffer.concat(buffers).toString();
+  const body = parse(bodyString) as TwilioRequestBody;
+
+  const message: string = body.Body?.toString() || "Hello?";
+  const sender: string = body.From?.toString() || "Unknown";
 
   const chatResponse = await openai.chat.completions.create({
     model: "gpt-4o",
