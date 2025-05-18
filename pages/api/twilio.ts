@@ -230,75 +230,150 @@ Remember to always represent the multicultural, family-founded values of Bocas D
     ]
   });
 
+  // Get the AI response
   let reply: string = chatResponse.choices[0].message.content ?? "Sorry, I could not generate a response.";
-  
-  // Enforce Twilio's 1500 character limit
-  const MAX_SMS_LENGTH = 1500;
   const originalLength = reply.length;
-  let truncated = false;
   
-  if (originalLength > MAX_SMS_LENGTH) {
-    truncated = true;
-    console.log(`Response exceeded ${MAX_SMS_LENGTH} characters (${originalLength}). Truncating...`);
-    
-    // Smart truncation strategy
-    // First try to find a good breakpoint (end of a sentence) near the limit
-    const breakpoints = ['. ', '! ', '? ', '\n'];
+  // Constants for message handling
+  const MAX_SMS_LENGTH = 1500;
+  const TYPING_INDICATOR_TIMEOUT = 3000; // 3 seconds of typing indicator
+  
+  // Function to find the best breakpoint for splitting a message
+  const findBreakpoint = (text: string, maxLength: number): number => {
+    // Try to break at paragraph, then sentence, then word
+    const breakpoints = ['\n\n', '\n', '. ', '! ', '? ', ', ', ' '];
     let bestBreakpoint = -1;
     
-    // Look for the last sentence break within the limit - 30 chars (for truncation message)
-    const searchLimit = MAX_SMS_LENGTH - 30;
     for (const bp of breakpoints) {
-      const lastIndex = reply.lastIndexOf(bp, searchLimit);
+      // Look for the last occurrence of the breakpoint within the limit
+      const lastIndex = text.lastIndexOf(bp, maxLength);
       if (lastIndex > bestBreakpoint) {
-        bestBreakpoint = lastIndex + bp.length - 1; // Include the period/space in the truncation point
+        bestBreakpoint = lastIndex + (bp.length > 1 ? bp.length - 1 : 0);
       }
     }
     
-    // If we found a good breakpoint, use it; otherwise do a hard truncation
-    if (bestBreakpoint > 0) {
-      reply = reply.substring(0, bestBreakpoint + 1);
+    // If no good breakpoint found, just break at the max length
+    return bestBreakpoint > 0 ? bestBreakpoint : maxLength;
+  };
+  
+  // Split the message into parts if it exceeds the limit
+  const messageParts: string[] = [];
+  let remainingText = reply;
+  
+  while (remainingText.length > 0) {
+    if (remainingText.length <= MAX_SMS_LENGTH) {
+      // Last or only part
+      messageParts.push(remainingText);
+      break;
     } else {
-      // Hard truncation at limit - 30 chars
-      reply = reply.substring(0, searchLimit);
+      // Find a good breakpoint
+      const breakpoint = findBreakpoint(remainingText, MAX_SMS_LENGTH);
+      
+      // Add part number if there will be multiple parts
+      const part = remainingText.substring(0, breakpoint);
+      messageParts.push(part);
+      
+      // Continue with the rest of the text
+      remainingText = remainingText.substring(breakpoint).trim();
     }
-    
-    // Add truncation message
-    reply += " [Message truncated due to length limit]";
-    
-    // Store the truncation event in Supabase if available
-    if (supabase) {
-      try {
-        // Find the latest message (the one we just stored)
-        const { data: latestCall } = await supabase
-          .from('calls')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single();
-          
-        if (latestCall) {
+  }
+  
+  // Add part numbers if there are multiple parts
+  if (messageParts.length > 1) {
+    messageParts.forEach((part, index) => {
+      messageParts[index] = `(${index + 1}/${messageParts.length}) ${part}`;
+    });
+  }
+  
+  // Log message splitting info
+  console.log(`Original message length: ${originalLength} characters`);
+  console.log(`Split into ${messageParts.length} parts`);
+  
+  // Store message parts info in Supabase if available
+  if (supabase) {
+    try {
+      // Find the latest call
+      const { data: latestCall } = await supabase
+        .from('calls')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+        
+      if (latestCall) {
+        // Store the outbound message(s) in Supabase
+        for (const part of messageParts) {
           await supabase.from('messages').insert({
             call_id: latestCall.id,
-            direction: 'system',
-            body: `Response truncated from ${originalLength} to ${reply.length} characters`,
+            direction: 'outbound',
+            body: part,
             sent_at: new Date().toISOString(),
           });
         }
-      } catch (err) {
-        console.error('Failed to log truncation event:', err);
+        
+        // Add a system note if we split the message
+        if (messageParts.length > 1) {
+          await supabase.from('messages').insert({
+            call_id: latestCall.id,
+            direction: 'system',
+            body: `Response split into ${messageParts.length} parts (${originalLength} total characters)`,
+            sent_at: new Date().toISOString(),
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to log message parts to Supabase:', err);
+    }
+  }
+  
+  // For Twilio, we can't show a true "typing indicator" like in some messaging apps,
+  // but we can create a similar experience by:
+  // 1. Sending a "..." message that looks like typing
+  // 2. Using pauses between messages
+  // 3. Breaking long responses into multiple messages with delays
+  
+  // Build the TwiML response
+  let twimlResponse = '<Response>';
+  
+  if (messageParts.length > 0) {
+    // First part - if it's a multi-part message, add a typing indicator first
+    if (messageParts.length > 1) {
+      // Send a typing indicator (three dots) that will be replaced by the actual message
+      twimlResponse += `
+      <Message>
+        <Body>...</Body>
+      </Message>
+      <Pause length="2"/>`; // 2 second pause to simulate typing
+    }
+    
+    // Send the first actual message part
+    twimlResponse += `
+      <Message>
+        <Body>${messageParts[0]}</Body>
+      </Message>`;
+    
+    // For multiple parts, add appropriate delays between them to simulate typing
+    if (messageParts.length > 1) {
+      for (let i = 1; i < messageParts.length; i++) {
+        // Calculate a dynamic pause based on message length (longer message = longer typing time)
+        // This creates a more realistic typing experience
+        const prevMessageLength = messageParts[i-1].length;
+        const typingTime = Math.min(Math.max(Math.floor(prevMessageLength / 300), 1), 5); // Between 1-5 seconds
+        
+        twimlResponse += `
+        <Pause length="${typingTime}"/>
+        <Message>
+          <Body>${messageParts[i]}</Body>
+        </Message>`;
       }
     }
   }
   
-  // Log message length for monitoring
-  console.log(`Final message length: ${reply.length} characters${truncated ? ' (truncated)' : ''}`);
+  // Close the response
+  twimlResponse += `
+    </Response>`;
   
-  // Send the response
-  res.setHeader("Content-Type", "text/xml");
-  res.status(200).send(`
-    <Response>
-      <Message>${reply}</Message>
-    </Response>
-  `);
+  // Send the TwiML response
+  res.setHeader('Content-Type', 'text/xml');
+  res.status(200).send(twimlResponse);
 }
