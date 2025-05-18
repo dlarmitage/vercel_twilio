@@ -230,8 +230,71 @@ Remember to always represent the multicultural, family-founded values of Bocas D
     ]
   });
 
-  const reply: string = chatResponse.choices[0].message.content ?? "Sorry, I could not generate a response.";
-
+  let reply: string = chatResponse.choices[0].message.content ?? "Sorry, I could not generate a response.";
+  
+  // Enforce Twilio's 1500 character limit
+  const MAX_SMS_LENGTH = 1500;
+  const originalLength = reply.length;
+  let truncated = false;
+  
+  if (originalLength > MAX_SMS_LENGTH) {
+    truncated = true;
+    console.log(`Response exceeded ${MAX_SMS_LENGTH} characters (${originalLength}). Truncating...`);
+    
+    // Smart truncation strategy
+    // First try to find a good breakpoint (end of a sentence) near the limit
+    const breakpoints = ['. ', '! ', '? ', '\n'];
+    let bestBreakpoint = -1;
+    
+    // Look for the last sentence break within the limit - 30 chars (for truncation message)
+    const searchLimit = MAX_SMS_LENGTH - 30;
+    for (const bp of breakpoints) {
+      const lastIndex = reply.lastIndexOf(bp, searchLimit);
+      if (lastIndex > bestBreakpoint) {
+        bestBreakpoint = lastIndex + bp.length - 1; // Include the period/space in the truncation point
+      }
+    }
+    
+    // If we found a good breakpoint, use it; otherwise do a hard truncation
+    if (bestBreakpoint > 0) {
+      reply = reply.substring(0, bestBreakpoint + 1);
+    } else {
+      // Hard truncation at limit - 30 chars
+      reply = reply.substring(0, searchLimit);
+    }
+    
+    // Add truncation message
+    reply += " [Message truncated due to length limit]";
+    
+    // Store the truncation event in Supabase if available
+    if (supabase) {
+      try {
+        // Find the latest message (the one we just stored)
+        const { data: latestCall } = await supabase
+          .from('calls')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+          
+        if (latestCall) {
+          await supabase.from('messages').insert({
+            call_id: latestCall.id,
+            direction: 'system',
+            body: `Response truncated from ${originalLength} to ${reply.length} characters`,
+            sent_at: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.error('Failed to log truncation event:', err);
+      }
+    }
+  }
+  
+  // Log message length for monitoring
+  console.log(`Final message length: ${reply.length} characters${truncated ? ' (truncated)' : ''}`);
+  
+  // Send the response
   res.setHeader("Content-Type", "text/xml");
   res.status(200).send(`
     <Response>
