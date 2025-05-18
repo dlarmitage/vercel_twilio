@@ -36,47 +36,58 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const sender: string = body.From?.toString() || "Unknown";
 
   // --- Supabase integration: Store message ---
-  // 1. Find or create phone number
-  let { data: phone, error: phoneError } = await supabase
-    .from('phone_numbers')
-    .select('*')
-    .eq('number', sender)
-    .single();
+  // Check if Supabase client is initialized
+  if (!supabase) {
+    console.error('Supabase client is not initialized. Check your environment variables.');
+    // Continue without Supabase integration
+  } else {
+    try {
+      // 1. Find or create phone number
+      let { data: phone, error: phoneError } = await supabase
+        .from('phone_numbers')
+        .select('*')
+        .eq('number', sender)
+        .single();
 
-  if (phoneError && phoneError.code === 'PGRST116') { // Not found
-    const { data: newPhone, error: insertPhoneError } = await supabase
-      .from('phone_numbers')
-      .insert({ number: sender })
-      .select()
-      .single();
-    phone = newPhone;
-    phoneError = insertPhoneError;
-  }
-  if (phoneError) {
-    return res.status(500).json({ error: 'Failed to find or create phone number', details: phoneError.message });
-  }
-
-  // 2. Find or create active call for this phone number (for SMS, we can group by day or session; here, create a new call for each message for simplicity)
-  const { data: call, error: callError } = await supabase
-    .from('calls')
-    .insert({ phone_number_id: phone.id })
-    .select()
-    .single();
-  if (callError) {
-    return res.status(500).json({ error: 'Failed to create call', details: callError.message });
-  }
-
-  // 3. Store the message
-  const { error: msgError } = await supabase
-    .from('messages')
-    .insert({
-      call_id: call.id,
-      direction: 'inbound',
-      body: message,
-      sent_at: new Date().toISOString(),
-    });
-  if (msgError) {
-    return res.status(500).json({ error: 'Failed to store message', details: msgError.message });
+      if (phoneError && phoneError.code === 'PGRST116') { // Not found
+        const { data: newPhone, error: insertPhoneError } = await supabase
+          .from('phone_numbers')
+          .insert({ number: sender })
+          .select()
+          .single();
+        phone = newPhone;
+        phoneError = insertPhoneError;
+      }
+      if (phoneError) {
+        console.error('Failed to find or create phone number:', phoneError.message);
+      } else {
+        // 2. Find or create active call for this phone number
+        const { data: call, error: callError } = await supabase
+          .from('calls')
+          .insert({ phone_number_id: phone.id })
+          .select()
+          .single();
+        if (callError) {
+          console.error('Failed to create call:', callError.message);
+        } else {
+          // 3. Store the message
+          const { error: msgError } = await supabase
+            .from('messages')
+            .insert({
+              call_id: call.id,
+              direction: 'inbound',
+              body: message,
+              sent_at: new Date().toISOString(),
+            });
+          if (msgError) {
+            console.error('Failed to store message:', msgError.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error in Supabase operations:', err);
+      // Continue with the response even if Supabase operations fail
+    }
   }
 
   // --- End Supabase integration ---

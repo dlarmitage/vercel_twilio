@@ -17,39 +17,77 @@ export default function AdminPanel() {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
-      // Fetch all phone numbers
-      const { data: numbers, error: numErr } = await supabase
-        .from('phone_numbers')
-        .select('*');
-      if (numErr || !numbers) {
+      
+      // Check if Supabase client is available
+      if (!supabase) {
+        console.error('Supabase client is not initialized. Check your environment variables.');
         setLoading(false);
         return;
       }
-      // For each number, fetch calls and messages
-      const numbersWithCalls: PhoneNumberWithCalls[] = await Promise.all(
-        numbers.map(async (number) => {
-          const { data: calls } = await supabase
-            .from('calls')
-            .select('*')
-            .eq('phone_number_id', number.id);
-          const callsWithMessages: CallWithMessages[] = calls
-            ? await Promise.all(
-                calls.map(async (call) => {
-                  const { data: messages } = await supabase
-                    .from('messages')
-                    .select('*')
-                    .eq('call_id', call.id)
-                    .order('sent_at', { ascending: true });
-                  return { ...call, messages: messages || [] };
-                })
-              )
-            : [];
-          return { ...number, calls: callsWithMessages };
-        })
-      );
-      setData(numbersWithCalls);
-      setLoading(false);
+      
+      try {
+        // We've already checked supabase is not null above, but TypeScript needs this assertion
+        const supabaseClient = supabase!;
+        
+        // Fetch all phone numbers
+        const { data: numbers, error: numErr } = await supabaseClient
+          .from('phone_numbers')
+          .select('*');
+        
+        if (numErr) {
+          console.error('Error fetching phone numbers:', numErr);
+          setLoading(false);
+          return;
+        }
+        
+        if (!numbers) {
+          setLoading(false);
+          return;
+        }
+        
+        // For each number, fetch calls and messages
+        const numbersWithCalls: PhoneNumberWithCalls[] = await Promise.all(
+          numbers.map(async (number) => {
+            const { data: calls, error: callsErr } = await supabaseClient
+              .from('calls')
+              .select('*')
+              .eq('phone_number_id', number.id);
+              
+            if (callsErr) {
+              console.error(`Error fetching calls for number ${number.id}:`, callsErr);
+              return { ...number, calls: [] };
+            }
+            
+            const callsWithMessages: CallWithMessages[] = calls
+              ? await Promise.all(
+                  calls.map(async (call) => {
+                    const { data: messages, error: msgErr } = await supabaseClient
+                      .from('messages')
+                      .select('*')
+                      .eq('call_id', call.id)
+                      .order('sent_at', { ascending: true });
+                      
+                    if (msgErr) {
+                      console.error(`Error fetching messages for call ${call.id}:`, msgErr);
+                      return { ...call, messages: [] };
+                    }
+                    
+                    return { ...call, messages: messages || [] };
+                  })
+                )
+              : [];
+            return { ...number, calls: callsWithMessages };
+          })
+        );
+        
+        setData(numbersWithCalls);
+      } catch (err) {
+        console.error('Unexpected error fetching data:', err);
+      } finally {
+        setLoading(false);
+      }
     };
+    
     fetchData();
   }, []);
 
